@@ -1,7 +1,7 @@
 .PHONY: proof test test-stateful soak-test kill-recover parallel-test audit
 
 test:
-	source venv/bin/activate && PYTHONPATH=. pytest tests/test_phase1.py tests/test_phase2.py tests/test_phase3.py
+	source venv/bin/activate && PYTHONPATH=. pytest tests/test_correctness.py tests/test_phase2.py tests/test_phase3.py
 
 test-stateful:
 	source venv/bin/activate && PYTHONPATH=. pytest tests/test_stateful.py -v
