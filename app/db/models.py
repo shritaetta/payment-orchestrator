@@ -49,7 +49,10 @@ class PaymentAttempt(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     payment_id = Column(UUID(as_uuid=True), ForeignKey('payments.id'), nullable=False)
     processor = Column(String(50), nullable=False)
-    status = Column(String(50), nullable=False)
+    processor_idempotency_key = Column(String(255), nullable=False, unique=True)
+    status = Column(String(50), nullable=False) # 'in_flight', 'successful', 'failed', 'ambiguous'
+    error_type = Column(String(50), nullable=True)
+    latency_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 class LedgerAccount(Base):
