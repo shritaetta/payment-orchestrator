@@ -8,10 +8,14 @@ from sqlalchemy import select, update, text
 from sqlalchemy.dialects.postgresql import insert
 from pydantic import BaseModel, Field
 import hashlib
+from typing import Any
 
 from app.db.session import get_db_session
 from app.db.models import IdempotencyKey
 from app.domain.payment import create_and_capture_payment
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -19,7 +23,7 @@ class PaymentRequest(BaseModel):
     amount_minor: int = Field(..., gt=0)
     idempotency_key: str
 
-def generate_hash(payload: dict) -> str:
+def generate_hash(payload: dict[str, Any]) -> str:
     canonical = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
@@ -28,9 +32,11 @@ async def create_payment(
     request: Request,
     payload: PaymentRequest,
     db: AsyncSession = Depends(get_db_session)
-):
+) -> Response:
     body = await request.json()
     req_hash = generate_hash(body)
+    
+    logger.info("create_payment_request", payload={"amount_minor": payload.amount_minor, "idempotency_key": payload.idempotency_key})
     
     # Attempt to insert idempotency key
     stmt = insert(IdempotencyKey).values(
@@ -47,7 +53,9 @@ async def create_payment(
     if not inserted:
         # Key already exists
         result = await db.execute(select(IdempotencyKey).where(IdempotencyKey.key == payload.idempotency_key))
-        existing_key = result.scalar_one_or_none()
+        existing_key: Any = result.scalar_one_or_none()
+        if not existing_key:
+            raise HTTPException(status_code=500, detail="Idempotency key logic error")
         
         if existing_key.request_hash != req_hash:
             raise HTTPException(status_code=422, detail="Idempotency key used with different payload")
@@ -100,7 +108,7 @@ async def refund_payment(
     request: Request,
     payload: RefundRequest,
     db: AsyncSession = Depends(get_db_session)
-):
+) -> Response:
     from app.domain.refund import create_refund
     
     body = await request.json()
@@ -121,7 +129,9 @@ async def refund_payment(
     if not inserted:
         # Key already exists
         result = await db.execute(select(IdempotencyKey).where(IdempotencyKey.key == payload.idempotency_key))
-        existing_key = result.scalar_one_or_none()
+        existing_key: Any = result.scalar_one_or_none()
+        if not existing_key:
+            raise HTTPException(status_code=500, detail="Idempotency key logic error")
         
         if existing_key.request_hash != req_hash:
             raise HTTPException(status_code=422, detail="Idempotency key used with different payload")

@@ -1,5 +1,6 @@
 from uuid import uuid4
 import json
+from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from datetime import datetime, timezone
@@ -15,11 +16,11 @@ async def create_refund(
     refund_amount_minor: int, 
     idempotency_key: str, 
     db: AsyncSession
-):
+) -> tuple[dict[str, "Any"], int]:
     async with db.begin():
         # Lock payment
         payment_stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
-        payment = (await db.execute(payment_stmt)).scalar_one_or_none()
+        payment: Payment | None = (await db.execute(payment_stmt)).scalar_one_or_none()
         
         if not payment:
             return {"error": "payment_not_found"}, 404

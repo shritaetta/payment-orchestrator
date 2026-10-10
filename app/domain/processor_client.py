@@ -17,12 +17,18 @@ class ProcessorClient:
         self.timeout = 2.0 # Strict timeout
 
     async def charge(self, amount_minor: int, idempotency_key: str) -> ProcessorResult:
+        from app.logging import get_correlation_id
+        headers: dict[str, str] = {"Idempotency-Key": idempotency_key}
+        corr_id = get_correlation_id()
+        if corr_id:
+            headers["X-Correlation-ID"] = corr_id
+            
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 resp = await client.post(
                     f"{self.base_url}/charge",
                     json={"amount_minor": amount_minor},
-                    headers={"Idempotency-Key": idempotency_key}
+                    headers=headers
                 )
                 
                 # Check status
@@ -46,9 +52,18 @@ class ProcessorClient:
         return ProcessorResult(status='retryable', error_type='unknown')
 
     async def lookup(self, idempotency_key: str) -> Optional[ProcessorResult]:
+        from app.logging import get_correlation_id
+        headers: dict[str, str] = {}
+        corr_id = get_correlation_id()
+        if corr_id:
+            headers["X-Correlation-ID"] = corr_id
+            
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
-                resp = await client.get(f"{self.base_url}/charges/{idempotency_key}")
+                resp = await client.get(
+                    f"{self.base_url}/charges/{idempotency_key}",
+                    headers=headers
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     return ProcessorResult(status='succeeded', charge_id=data['id'], latency_ms=int(resp.elapsed.total_seconds() * 1000))

@@ -8,10 +8,11 @@ from app.db.session import async_session_maker
 from app.db.models import Payment, PaymentAttempt
 from app.domain.processor_client import ProcessorClient
 from app.domain.ledger import post_capture
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
-async def reconcile_payments(db: AsyncSession, processor_url: str = "http://localhost:8001"):
+async def reconcile_payments(db: AsyncSession, processor_url: str = "http://localhost:8001") -> int:
     # Find payments that need reconciliation
     # status == 'unknown' or (status == 'processing' and attempt is older than 5 seconds)
     
@@ -45,7 +46,13 @@ async def reconcile_payments(db: AsyncSession, processor_url: str = "http://loca
             .order_by(PaymentAttempt.created_at.desc())
             .limit(1)
         )
-        attempt = (await db.execute(attempt_stmt)).scalar_one()
+        attempt: PaymentAttempt = (await db.execute(attempt_stmt)).scalar_one()
+        
+        if attempt.correlation_id:
+            from app.logging import set_correlation_id
+            set_correlation_id(attempt.correlation_id)
+            
+        logger.info("reconciling_payment", payment_id=str(payment.id), idempotency_key=attempt.processor_idempotency_key)
         
         # Perform lookup
         result = await client.lookup(attempt.processor_idempotency_key)

@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: pip install ruff
+    - name: Lint (ruff check)
+      run: ruff check app tests mock_processors
+    - name: Format (ruff format)
+      run: ruff format --check app tests mock_processors
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Typecheck (mypy)
+      run: mypy --strict app
+
+  unit_and_integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rishi
+          POSTGRES_DB: payment_orchestrator
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+        pip install -r requirements.txt
+        pip install pytest-html pytest-cov
+    - name: Run Migrations
+      run: |
+        source venv/bin/activate
+        alembic upgrade head
+    - name: Run Pytest with Coverage
+      run: |
+        source venv/bin/activate
+        # Ignore concurrency test here, run it in separate job
+        pytest tests/ -k "not test_concurrent" --cov=app --cov-fail-under=75 --cov-report=html --html=report.html
+    - name: Upload Coverage HTML
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: htmlcov/
+    - name: Upload Pytest HTML
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-report
+        path: report.html
+
+  concurrency:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rishi
+          POSTGRES_DB: payment_orchestrator
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+        pip install -r requirements.txt
+    - name: Run Migrations
+      run: |
+        source venv/bin/activate
+        alembic upgrade head
+    - name: Concurrency Test
+      run: |
+        source venv/bin/activate
+        pytest tests/ -k "test_concurrent" -s

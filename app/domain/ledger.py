@@ -2,7 +2,7 @@ from uuid import uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import LedgerEntry, Payment
 
-async def post_capture(payment: Payment, db: AsyncSession):
+async def post_capture(payment: Payment, db: AsyncSession) -> None:
     # Debit processor_clearing, Credit merchant_payable and fees_revenue
     # For simplicity, 2.9% + 0.30 fee
     fee_minor = int(payment.amount_minor * 0.029) + 30

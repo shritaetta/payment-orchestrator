@@ -11,7 +11,9 @@ import httpx
 
 from app.db.models import OutboxEvent, DeadLetter
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 WEBHOOK_URL = "http://localhost:8004/webhook"
 WEBHOOK_SECRET = b"my-super-secret-key"
@@ -21,7 +23,7 @@ def generate_signature(payload_str: str, timestamp: str) -> str:
     message = f"{timestamp}.{payload_str}".encode('utf-8')
     return hmac.new(WEBHOOK_SECRET, message, hashlib.sha256).hexdigest()
 
-async def process_outbox_events(db: AsyncSession):
+async def process_outbox_events(db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
     
     # Claim events
@@ -41,6 +43,12 @@ async def process_outbox_events(db: AsyncSession):
         
     async with httpx.AsyncClient() as client:
         for event in events:
+            if event.correlation_id:
+                from app.logging import set_correlation_id
+                set_correlation_id(event.correlation_id)
+            
+            logger.info("processing_outbox_event", event_id=str(event.id), aggregate_type=event.aggregate_type)
+            
             payload_str = json.dumps(event.payload, separators=(',', ':'))
             timestamp = str(int(time.time()))
             signature = generate_signature(payload_str, timestamp)

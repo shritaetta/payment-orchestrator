@@ -84,7 +84,7 @@ async def route_payment(amount_minor: int, currency: str, db: AsyncSession) -> L
         
     success_rates = await get_processor_success_rates(db)
     
-    def score(p: ProcessorConfig):
+    def score(p: ProcessorConfig) -> tuple[float, float]:
         rate = success_rates.get(p.name, 1.0) # default 100% success if no data
         fee = p.base_fee + int(amount_minor * p.fee_percent)
         # Sort descending by rate, ascending by fee. 

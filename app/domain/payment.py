@@ -5,7 +5,7 @@ import json
 import logging
 import asyncio
 import random
-from typing import Callable, Awaitable, Optional, Tuple
+from typing import Callable, Awaitable, Optional, Tuple, Any
 
 from app.db.models import Payment, IdempotencyKey, PaymentAttempt
 from app.domain.ledger import post_capture
@@ -16,7 +16,7 @@ from app.domain.outbox import publish_event
 
 logger = logging.getLogger(__name__)
 
-async def exponential_backoff(attempt: int, base_ms: int = 100, max_ms: int = 2000):
+async def exponential_backoff(attempt: int, base_ms: int = 100, max_ms: int = 2000) -> None:
     delay_ms = min(base_ms * (2 ** attempt), max_ms)
     jitter = random.uniform(0, delay_ms)
     await asyncio.sleep(jitter / 1000.0)
@@ -28,7 +28,7 @@ async def create_and_capture_payment(
     processor_url: str = "http://localhost:8001",
     test_crash_hook: Optional[Callable[[], Awaitable[None]]] = None,
     currency: str = "USD"
-) -> Tuple[dict, int]:
+) -> Tuple[dict[str, Any], int]:
     
     # Fast path: Check idempotency before doing heavy work
     # We do this in endpoints.py in Phase 1, but we might also need to do it here if it's the entrypoint, 
@@ -59,16 +59,18 @@ async def create_and_capture_payment(
         
         async with db.begin():
             payment_stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
-            payment = (await db.execute(payment_stmt)).scalar_one()
-            payment.status = 'processing'
+            payment_obj: Payment = (await db.execute(payment_stmt)).scalar_one()
+            payment_obj.status = 'processing'
             
-            attempt = PaymentAttempt(
-                payment_id=payment.id,
+            from app.logging import get_correlation_id
+            attempt_obj: PaymentAttempt = PaymentAttempt(
+                payment_id=payment_obj.id,
                 processor=processor.name,
                 processor_idempotency_key=processor_key,
-                status='in_flight'
+                status='in_flight',
+                correlation_id=get_correlation_id()
             )
-            db.add(attempt)
+            db.add(attempt_obj)
         
         client = ProcessorClient(processor.url)
         breaker = circuit_breakers.get_breaker(processor.name)
@@ -123,46 +125,46 @@ async def create_and_capture_payment(
         # Tx 2: Record Outcome
         async with db.begin():
             payment_stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
-            payment = (await db.execute(payment_stmt)).scalar_one()
+            payment_obj = (await db.execute(payment_stmt)).scalar_one()
             
             attempt_stmt = select(PaymentAttempt).where(PaymentAttempt.processor_idempotency_key == processor_key).with_for_update()
-            attempt = (await db.execute(attempt_stmt)).scalar_one()
+            attempt_obj = (await db.execute(attempt_stmt)).scalar_one()
             
             if result:
-                attempt.latency_ms = result.latency_ms
-                attempt.error_type = result.error_type
+                attempt_obj.latency_ms = result.latency_ms
+                attempt_obj.error_type = result.error_type
                 
                 if result.status == 'succeeded':
-                    payment.status = 'captured'
-                    attempt.status = 'successful'
-                    await post_capture(payment, db)
+                    payment_obj.status = 'captured'
+                    attempt_obj.status = 'successful'
+                    await post_capture(payment_obj, db)
                     status_code = 201
-                    resp_body = {"id": str(payment.id), "status": "captured", "amount_minor": payment.amount_minor, "charge_id": result.charge_id}
-                    publish_event(db, "payment", str(payment.id), resp_body)
+                    resp_body = {"id": str(payment_obj.id), "status": "captured", "amount_minor": payment_obj.amount_minor, "charge_id": result.charge_id}
+                    publish_event(db, "payment", str(payment_obj.id), resp_body)
                     
                     # Update idempotency key
                     await db.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key).values(status='completed', response_code=status_code, response_body=resp_body))
                     return resp_body, status_code
                     
                 elif result.status == 'declined':
-                    payment.status = 'failed'
-                    attempt.status = 'failed'
+                    payment_obj.status = 'failed'
+                    attempt_obj.status = 'failed'
                     status_code = 400
-                    resp_body = {"id": str(payment.id), "status": "failed", "amount_minor": payment.amount_minor, "error": result.error_type}
-                    publish_event(db, "payment", str(payment.id), resp_body)
+                    resp_body = {"id": str(payment_obj.id), "status": "failed", "amount_minor": payment_obj.amount_minor, "error": result.error_type}
+                    publish_event(db, "payment", str(payment_obj.id), resp_body)
                     
                     # Update idempotency key
                     await db.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key).values(status='completed', response_code=status_code, response_body=resp_body))
                     return resp_body, status_code
                     
                 else:
-                    attempt.status = 'failed' if result.status == 'retryable' else 'ambiguous'
+                    attempt_obj.status = 'failed' if result.status == 'retryable' else 'ambiguous'
             
             if not resolved and result and result.status == 'ambiguous':
                 # We cannot safely failover to the next processor because this processor might have charged the user!
-                payment.status = 'unknown'
+                payment_obj.status = 'unknown'
                 status_code = 502
-                resp_body = {"id": str(payment.id), "status": "unknown", "amount_minor": payment.amount_minor, "error": "ambiguous_processor_response"}
+                resp_body = {"id": str(payment_obj.id), "status": "unknown", "amount_minor": payment_obj.amount_minor, "error": "ambiguous_processor_response"}
                 
                 await db.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key).values(status='completed', response_code=status_code, response_body=resp_body))
                 return resp_body, status_code
@@ -173,11 +175,11 @@ async def create_and_capture_payment(
     # If all processors failed (and no ambiguous state locked us in)
     async with db.begin():
         payment_stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
-        payment = (await db.execute(payment_stmt)).scalar_one()
-        payment.status = 'failed'
+        payment_obj = (await db.execute(payment_stmt)).scalar_one()
+        payment_obj.status = 'failed'
         status_code = 502
-        resp_body = {"id": str(payment.id), "status": "failed", "amount_minor": payment.amount_minor, "error": "all_processors_failed"}
-        publish_event(db, "payment", str(payment.id), resp_body)
+        resp_body = {"id": str(payment_obj.id), "status": "failed", "amount_minor": payment_obj.amount_minor, "error": "all_processors_failed"}
+        publish_event(db, "payment", str(payment_obj.id), resp_body)
         await db.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key).values(status='completed', response_code=status_code, response_body=resp_body))
         
     return resp_body, status_code

@@ -31,9 +31,23 @@ def update_config(config: Config):
     current_config = config
     return {"status": "updated", "config": current_config}
 
+import logging
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ]
+)
+logger = structlog.get_logger(__name__)
+
 @app.post("/charge", response_model=ChargeResponse)
-async def charge(req: ChargeRequest, idempotency_key: str = Header(..., alias="Idempotency-Key")):
+async def charge(req: ChargeRequest, idempotency_key: str = Header(..., alias="Idempotency-Key"), x_correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID")):
     global current_config
+    
+    logger.info("processing_charge", idempotency_key=idempotency_key, correlation_id=x_correlation_id)
     
     if idempotency_key in charges:
         return charges[idempotency_key]
@@ -63,7 +77,8 @@ async def charge(req: ChargeRequest, idempotency_key: str = Header(..., alias="I
     return response
 
 @app.get("/charges/{idempotency_key}")
-async def lookup(idempotency_key: str):
+async def lookup(idempotency_key: str, x_correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID")):
+    logger.info("processing_lookup", idempotency_key=idempotency_key, correlation_id=x_correlation_id)
     if idempotency_key in charges:
         return charges[idempotency_key]
     raise HTTPException(status_code=404, detail="Not Found")

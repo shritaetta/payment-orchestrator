@@ -18,14 +18,14 @@ class CircuitBreaker:
         self.last_failure_time = 0.0
         self.lock = Lock()
 
-    def record_failure(self):
+    def record_failure(self) -> None:
         with self.lock:
             self.failures += 1
             if self.state == CircuitBreakerState.HALF_OPEN or self.failures >= self.failure_threshold:
                 self.state = CircuitBreakerState.OPEN
                 self.last_failure_time = time.time()
 
-    def record_success(self):
+    def record_success(self) -> None:
         with self.lock:
             self.failures = 0
             self.state = CircuitBreakerState.CLOSED
@@ -47,7 +47,7 @@ class CircuitBreaker:
             return True
 
 class CircuitBreakerManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self._breakers: Dict[str, CircuitBreaker] = {}
         self.lock = Lock()
 
