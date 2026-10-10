@@ -31,6 +31,7 @@ class Payment(Base):
     __tablename__ = 'payments'
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     amount_minor = Column(BigInteger, CheckConstraint('amount_minor > 0'), nullable=False)
+    amount_refunded = Column(BigInteger, CheckConstraint('amount_refunded >= 0 AND amount_refunded <= amount_minor'), nullable=False, default=0)
     status = Column(String(50), nullable=False, default='created')
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
@@ -77,6 +78,9 @@ class OutboxEvent(Base):
     payload = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     processed_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    attempts = Column(Integer, nullable=False, default=0)
+    status = Column(String(50), nullable=False, default='pending') # pending, processed, failed
 
 class DeadLetter(Base):
     __tablename__ = 'dead_letters'
